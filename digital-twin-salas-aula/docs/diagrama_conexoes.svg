@@ -1,0 +1,50 @@
+<svg width="820" height="770" viewBox="0 0 820 770" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="820" height="770" fill="#FFFFFF"/>
+
+  <text x="410" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#222222">Diagrama de conexões — NodeMCU ESP8266 (Digital Twin)</text>
+
+  <!-- NodeMCU box -->
+  <rect x="40" y="60" width="200" height="670" rx="10" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="1.5"/>
+  <text x="140" y="95" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#2C2C2A">NodeMCU</text>
+  <text x="140" y="115" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444441">ESP8266 (ESP-12E)</text>
+
+  <!-- Connector lines -->
+  <line x1="240" y1="115" x2="480" y2="115" stroke="#0F6E56" stroke-width="1.5"/>
+  <line x1="240" y1="245" x2="480" y2="245" stroke="#993C1D" stroke-width="1.5"/>
+  <line x1="240" y1="365" x2="480" y2="365" stroke="#993C1D" stroke-width="1.5"/>
+  <line x1="240" y1="485" x2="480" y2="485" stroke="#993C1D" stroke-width="1.5"/>
+  <line x1="240" y1="645" x2="480" y2="645" stroke="#854F0B" stroke-width="1.5"/>
+
+  <!-- Line labels -->
+  <text x="360" y="106" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0F6E56">3V3 · D4 · GND</text>
+  <text x="360" y="236" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#993C1D">D1 · GND</text>
+  <text x="360" y="356" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#993C1D">D2 · GND</text>
+  <text x="360" y="476" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#993C1D">D3 · GND</text>
+  <text x="360" y="636" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#854F0B">D6 · D7 · D5 · GND</text>
+
+  <!-- DHT11 box -->
+  <rect x="480" y="60" width="300" height="110" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.5"/>
+  <text x="630" y="110" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#04342C">Sensor DHT11</text>
+  <text x="630" y="132" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#085041">temperatura e umidade</text>
+
+  <!-- Botao 1 -->
+  <rect x="480" y="200" width="300" height="90" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="1.5"/>
+  <text x="630" y="252" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#4A1B0C">Botão — Técnico</text>
+
+  <!-- Botao 2 -->
+  <rect x="480" y="320" width="300" height="90" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="1.5"/>
+  <text x="630" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#4A1B0C">Botão — Material</text>
+
+  <!-- Botao 3 -->
+  <rect x="480" y="440" width="300" height="90" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="1.5"/>
+  <text x="630" y="480" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#4A1B0C">Botão — Outros</text>
+  <text x="630" y="502" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#712B13">(pino FLASH — não apertar ao ligar)</text>
+
+  <!-- LED RGB box -->
+  <rect x="480" y="560" width="300" height="170" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="1.5"/>
+  <text x="630" y="600" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#412402">LED RGB (KY-009)</text>
+  <text x="630" y="625" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#633806">Vermelho (R) → D6</text>
+  <text x="630" y="645" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#633806">Verde (G) → D7</text>
+  <text x="630" y="665" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#633806">Azul (B) → D5</text>
+  <text x="630" y="685" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#633806">Comum (catodo) → GND</text>
+</svg>
