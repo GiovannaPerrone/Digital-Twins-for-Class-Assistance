@@ -31,10 +31,14 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <DHT.h>
+#include <PubSubClient.h>
 
 // >>> PREENCHE AQUI com os dados da sua rede Wi-Fi <<<
 const char* nomeDaRede = "iPhone de Giovanna";
 const char* senhaDaRede = "espaqui!!";
+const char* mqttBroker = "broker.hivemq.com";
+const int mqttPorta = 1883;
+const char* topicoSala = "digitaltwin/sala120/status";
 
 #define DHTPIN D4
 #define DHTTYPE DHT11
@@ -45,6 +49,8 @@ const char* senhaDaRede = "espaqui!!";
 
 DHT dht(DHTPIN, DHTTYPE);
 ESP8266WebServer servidor(80);
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 
 float temperaturaAtual = 0;
 float umidadeAtual = 0;
@@ -198,6 +204,24 @@ void conectarWifi() {
   Serial.println("Acesse esse endereco no navegador (mesma rede Wi-Fi) pra ver o dashboard.");
 }
 
+
+void conectarMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.print("Conectando no broker MQTT...");
+
+    if (mqttClient.connect("ESP8266_Sala120")) {
+      Serial.println(" conectado!");
+    } else {
+      Serial.print(" falhou, codigo=");
+      Serial.print(mqttClient.state());
+      Serial.println(" tentando de novo em 5 segundos");
+      delay(5000);
+    }
+  }
+}
+
+
+
 void tratarPaginaPrincipal() {
   servidor.send_P(200, "text/html", PAGINA_HTML);
 }
@@ -221,11 +245,13 @@ void alternarChamado(String tipo, String rotulo) {
     alertaAtivo = false;
     tipoAlertaAtivo = "nenhum";
     Serial.println(">> Chamado " + rotulo + " ENCERRADO");
+    mqttClient.publish(topicoSala, "encerrado");
   } else {
     // chamado novo (ou troca de tipo, se ja tinha outro aberto)
     alertaAtivo = true;
     tipoAlertaAtivo = tipo;
     horaInicioAlerta = millis();
+    mqttClient.publish(topicoSala, tipo.c_str());
     Serial.println(">> Chamado: " + rotulo);
   }
 }
@@ -239,6 +265,8 @@ void setup() {
   pinMode(BOTAO_OUTROS, INPUT_PULLUP);
 
   conectarWifi();
+  mqttClient.setServer(mqttBroker, mqttPorta);
+  conectarMQTT();
 
   servidor.on("/", tratarPaginaPrincipal);
   servidor.on("/dados", tratarDados);
@@ -248,6 +276,10 @@ void setup() {
 
 void loop() {
   servidor.handleClient();
+  if (!mqttClient.connected()) {
+  conectarMQTT();
+}
+mqttClient.loop();
 
   if (millis() - ultimaLeituraDHT >= intervaloDHT) {
     ultimaLeituraDHT = millis();
