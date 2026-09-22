@@ -17,7 +17,7 @@ export function useSala() {
     c.on("message", (_, payload) => {
       try {
         setSala(JSON.parse(payload.toString()));
-        setVistoEm(Date.now());          // quem carimba o horário é o receptor
+        setVistoEm(Date.now());
       } catch {
         console.warn("payload inválido:", payload.toString());
       }
@@ -26,6 +26,5 @@ export function useSala() {
   }, []);
 
   const fechar = (cat) => client.current?.publish(COMANDO, `fechar:${cat}`);
-
   return { sala, vistoEm, fechar };
 }
