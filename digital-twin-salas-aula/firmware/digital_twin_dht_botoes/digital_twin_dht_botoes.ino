@@ -32,166 +32,155 @@
 #include <ESP8266WebServer.h>
 #include <DHT.h>
 #include <PubSubClient.h>
+#include "credenciais.h"
 
 // >>> PREENCHE AQUI com os dados da sua rede Wi-Fi <<<
-const char* nomeDaRede = "iPhone de Giovanna";
-const char* senhaDaRede = "espaqui!!";
 const char* mqttBroker = "broker.hivemq.com";
 const int mqttPorta = 1883;
 const char* topicoSala = "digitaltwin/sala120/status";
+const char* TOPICO_STATUS  = "digitaltwin/sala120/status";
+const char* TOPICO_COMANDO = "digitaltwin/sala120/comando";
+const char* TOPICO_ONLINE  = "digitaltwin/sala120/online";
+
+const char* SALA  = "120";
+const int   ANDAR = 1;
+const unsigned long INTERVALO_PUBLICACAO  = 10000UL;   // 10 s
+const unsigned long INTERVALO_TEMPERATURA = 600000UL;  // 10 min
+const unsigned long INTERVALO_RECONEXAO   = 5000UL;    // 5 s
+
 
 #define DHTPIN D4
 #define DHTTYPE DHT11
 
 #define BOTAO_TECNICO D1
 #define BOTAO_MATERIAL D2
-#define BOTAO_OUTROS D3
+#define BOTAO_OUTRO D3
 
 DHT dht(DHTPIN, DHTTYPE);
-ESP8266WebServer servidor(80);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
 float temperaturaAtual = 0;
 float umidadeAtual = 0;
+bool temLeitura = false;
+unsigned long proximaLeituraDHT = 2000;
 
-bool alertaAtivo = false;
-String tipoAlertaAtivo = "nenhum";
-unsigned long horaInicioAlerta = 0;
+bool chamadoTecnico = false;
+bool chamadoMaterial = false;
+bool chamadoOutro = false;
+unsigned long inicioTecnico = 0;
+unsigned long inicioMaterial = 0;
+unsigned long inicioOutro = 0;
+
+struct Botao {
+  uint8_t       pino;
+  int           leituraAnterior;
+  int           estadoEstavel;
+  unsigned long mudouEm;
+};
+const unsigned long DEBOUNCE_MS = 50;
+
+Botao botaoTecnico  = { BOTAO_TECNICO,  HIGH, HIGH, 0 };
+Botao botaoMaterial = { BOTAO_MATERIAL, HIGH, HIGH, 0 };
+Botao botaoOutro    = { BOTAO_OUTRO,    HIGH, HIGH, 0 };
 
 unsigned long ultimaLeituraDHT = 0;
-const unsigned long intervaloDHT = 2000;
+const unsigned long intervaloDHT = 600000;
 
-// Pagina do dashboard: planta baixa (SVG) + status ao vivo.
-// A sala 120 (id="sala120") muda de cor via JavaScript, conforme
-// o JSON devolvido por /dados.
-const char PAGINA_HTML[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Digital Twin - Sala 120</title>
-<style>
-  body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
-  h1 { font-size: 20px; color: #222; }
-  .mapa { background: #fff; border-radius: 10px; padding: 10px; display: inline-block; box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
-  .sala-label { font-size: 11px; font-weight: bold; fill: #222; }
-  .outra-sala { fill: #f7b563; stroke: #a86a1f; stroke-width: 1; }
-  .servico { fill: #8fd0a0; stroke: #2c7a43; stroke-width: 1; }
-  .tech { fill: #7fb8e0; stroke: #2c6a94; stroke-width: 1; }
-  .corredor { fill: #d9d9d9; stroke: #aaa; stroke-width: 1; }
-  .escada { fill: #333; }
-  .cartao { max-width: 340px; margin: 16px auto 0; background: #fff; border-radius: 10px; padding: 14px 18px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); text-align: left; }
-  .status-badge { display: inline-block; padding: 4px 12px; border-radius: 999px; color: #fff; font-weight: bold; font-size: 13px; }
-  .linha { margin: 8px 0; font-size: 14px; color: #333; }
-</style>
-</head>
-<body>
-  <h1>Digital Twin - Sala 120</h1>
+unsigned long ultimaPublicacao = 0;
+const unsigned long intervaloPublicacao = 10000;
 
-  <div class="mapa">
-    <svg viewBox="0 0 380 520" width="320" height="440">
-      <rect x="170" y="10" width="40" height="30" class="escada"/>
-      <text x="190" y="55" text-anchor="middle" class="sala-label">escada</text>
 
-      <rect x="175" y="45" width="30" height="435" class="corredor"/>
+// Controle de tempo
+unsigned long ultimaTentativaMQTT = 0;
+bool          jaTentouMQTT        = false;
+bool          wifiAvisado         = false;
 
-      <rect x="60" y="45" width="110" height="18" fill="#e6d6f0" stroke="#8a5fa8"/>
-      <text x="115" y="58" text-anchor="middle" font-size="9">materiais</text>
+char clientId[40];
 
-      <rect x="60" y="68" width="110" height="88" class="tech"/>
-      <text x="115" y="115" text-anchor="middle" class="sala-label">TECH 3</text>
+void publicarStatus() {
+  if (!mqttClient.connected() || !temLeitura) return;
 
-      <rect x="60" y="160" width="110" height="88" class="tech"/>
-      <text x="115" y="207" text-anchor="middle" class="sala-label">TECH 2</text>
+  char t[10], u[10];
+  dtostrf(temperaturaAtual, 1, 1, t);   // 22.4
+  dtostrf(umidadeAtual,     1, 1, u);
 
-      <rect x="40" y="253" width="130" height="38" fill="#d9d9d9" stroke="#aaa"/>
-      <text x="105" y="275" text-anchor="middle" font-size="10">em breve...</text>
+  // Há quantos segundos cada chamado está aberto (0 se estiver fechado).
+  unsigned long agora = millis();
+  unsigned long segTecnico  = chamadoTecnico  ? (agora - inicioTecnico)  / 1000 : 0;
+  unsigned long segMaterial = chamadoMaterial ? (agora - inicioMaterial) / 1000 : 0;
+  unsigned long segOutro    = chamadoOutro    ? (agora - inicioOutro)    / 1000 : 0;
 
-      <rect x="70" y="298" width="60" height="40" class="servico"/>
-      <text x="100" y="321" text-anchor="middle" font-size="10">WC C</text>
+  char json[320];
+  snprintf(json, sizeof(json),
+    "{\"sala\":\"%s\",\"andar\":%d,\"temperatura\":%s,\"umidade\":%s,"
+    "\"chamados\":{\"tecnico\":%s,\"material\":%s,\"outro\":%s},"
+    "\"segundos\":{\"tecnico\":%lu,\"material\":%lu,\"outro\":%lu}}",
+    SALA, ANDAR, t, u,
+    chamadoTecnico  ? "true" : "false",
+    chamadoMaterial ? "true" : "false",
+    chamadoOutro    ? "true" : "false",
+    segTecnico, segMaterial, segOutro);
 
-      <rect x="70" y="342" width="60" height="48" class="servico"/>
-      <text x="100" y="369" text-anchor="middle" font-size="10">WC F</text>
-
-      <rect x="70" y="396" width="60" height="48" class="servico"/>
-      <text x="100" y="423" text-anchor="middle" font-size="10">WC M</text>
-
-      <rect x="55" y="452" width="100" height="55" class="outra-sala"/>
-      <text x="105" y="483" text-anchor="middle" class="sala-label">121</text>
-
-      <rect x="210" y="45" width="90" height="95" class="outra-sala"/>
-      <text x="255" y="96" text-anchor="middle" class="sala-label">115</text>
-
-      <rect x="210" y="148" width="90" height="68" class="outra-sala"/>
-      <text x="255" y="185" text-anchor="middle" class="sala-label">117</text>
-
-      <rect x="210" y="223" width="90" height="68" class="outra-sala"/>
-      <text x="255" y="260" text-anchor="middle" class="sala-label">118</text>
-
-      <rect x="210" y="298" width="90" height="82" class="outra-sala"/>
-      <text x="255" y="342" text-anchor="middle" class="sala-label">119</text>
-
-      <rect id="sala120" x="210" y="387" width="70" height="45" class="outra-sala"/>
-      <text x="245" y="413" text-anchor="middle" class="sala-label">120</text>
-
-      <rect x="170" y="482" width="40" height="30" class="escada"/>
-      <text x="190" y="475" text-anchor="middle" class="sala-label">escada</text>
-    </svg>
-  </div>
-
-  <div class="cartao">
-    <div class="linha"><b>Status:</b> <span id="status" class="status-badge">carregando...</span></div>
-    <div class="linha"><b>Temperatura:</b> <span id="temperatura">--</span> C</div>
-    <div class="linha"><b>Umidade:</b> <span id="umidade">--</span> %</div>
-    <div class="linha"><b>Chamado:</b> <span id="alerta">--</span></div>
-    <div class="linha"><b>Em aberto ha:</b> <span id="tempo">--</span></div>
-  </div>
-
-<script>
-async function atualizar() {
-  try {
-    const resposta = await fetch('/dados');
-    const dados = await resposta.json();
-
-    document.getElementById('temperatura').textContent = dados.temperatura.toFixed(1);
-    document.getElementById('umidade').textContent = dados.umidade.toFixed(1);
-    document.getElementById('alerta').textContent = dados.tipo_alerta;
-    document.getElementById('tempo').textContent = dados.alerta_ativo ? (dados.segundos_em_aberto + 's') : '--';
-
-    const sala = document.getElementById('sala120');
-    const badge = document.getElementById('status');
-
-    if (dados.alerta_ativo) {
-      sala.style.fill = '#e05252';
-      sala.style.stroke = '#8c1f1f';
-      badge.textContent = 'ALERTA: ' + dados.tipo_alerta.toUpperCase();
-      badge.style.background = '#e05252';
-    } else {
-      sala.style.fill = '#4caf6f';
-      sala.style.stroke = '#2c7a43';
-      badge.textContent = 'NORMAL';
-      badge.style.background = '#4caf6f';
-    }
-  } catch (erro) {
-    document.getElementById('status').textContent = 'sem conexao';
-    document.getElementById('status').style.background = '#999';
+  // true = retida: quem abrir o painel depois recebe o estado na hora.
+  if (!mqttClient.publish(TOPICO_STATUS, json, true)) {
+    Serial.println("Falha ao publicar status no broker MQTT");
   }
+  ultimaPublicacao = agora;
 }
 
-atualizar();
-setInterval(atualizar, 2000);
-</script>
-</body>
-</html>
-)rawliteral";
+void aoReceberComando(char* topico, byte* payload, unsigned int tamanho) {
+  // O payload chega como bytes soltos, sem o marcador de fim de texto
+  // que o C exige. Copiamos para "cmd" e colocamos esse marcador ('\0').
+  char cmd[32];
+  unsigned int n = tamanho < sizeof(cmd) - 1 ? tamanho : sizeof(cmd) - 1;
+  memcpy(cmd, payload, n);
+  cmd[n] = '\0';
+
+  Serial.print("<< comando: ");
+  Serial.println(cmd);
+
+  // strcmp compara dois textos: devolve 0 quando são iguais.
+  if (strcmp(cmd, "fechar:tecnico") == 0) {
+    chamadoTecnico = false;
+    inicioTecnico  = 0;
+  } else if (strcmp(cmd, "fechar:material") == 0) {
+    chamadoMaterial = false;
+    inicioMaterial  = 0;
+  } else if (strcmp(cmd, "fechar:outro") == 0) {
+    chamadoOutro = false;
+    inicioOutro  = 0;
+  } else {
+    return;   // comando desconhecido: ignora e não publica nada
+  }
+
+  publicarStatus();   // confirma ao painel que o chamado foi fechado
+}
+
+bool foiApertado(Botao &b) {
+  unsigned long agora = millis();
+  int leitura = digitalRead(b.pino);
+
+  // 1. A leitura mudou? Anota o momento e espera estabilizar.
+  if (leitura != b.leituraAnterior) {
+    b.mudouEm = agora;
+    b.leituraAnterior = leitura;
+  }
+
+  // 2. Ficou estável por 50 ms e é diferente do último valor aceito?
+  if (agora - b.mudouEm >= DEBOUNCE_MS && leitura != b.estadoEstavel) {
+    b.estadoEstavel = leitura;
+    return leitura == LOW;   // true só se a mudança foi para APERTADO
+  }
+
+  return false;
+}
 
 void conectarWifi() {
   Serial.print("Conectando na rede ");
-  Serial.println(nomeDaRede);
+  Serial.println(NOME_DA_REDE);
 
-  WiFi.begin(nomeDaRede, senhaDaRede);
+  WiFi.begin(NOME_DA_REDE, SENHA_DA_REDE);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -210,7 +199,9 @@ void conectarMQTT() {
     Serial.print("Conectando no broker MQTT...");
 
     if (mqttClient.connect("ESP8266_Sala120")) {
-      Serial.println(" conectado!");
+      Serial.println(" conectado.");
+      mqttClient.subscribe(TOPICO_COMANDO);
+      publicarStatus();   
     } else {
       Serial.print(" falhou, codigo=");
       Serial.print(mqttClient.state());
@@ -220,92 +211,88 @@ void conectarMQTT() {
   }
 }
 
+void lerTemperatura() {
+  // Comparação segura mesmo quando millis() dá a volta (~49 dias).
+  if ((long)(millis() - proximaLeituraDHT) < 0) return;
 
+  float u = dht.readHumidity();
+  float t = dht.readTemperature();
 
-void tratarPaginaPrincipal() {
-  servidor.send_P(200, "text/html", PAGINA_HTML);
+  if (isnan(u) || isnan(t)) {
+    Serial.println("Falha na leitura do DHT11, tentando em 2 s");
+    proximaLeituraDHT = millis() + 2000;
+    return;
+  }
+
+  temperaturaAtual = t;
+  umidadeAtual     = u;
+  proximaLeituraDHT = millis() + INTERVALO_TEMPERATURA;
+
+  Serial.print("temperatura ");
+  Serial.print(temperaturaAtual, 1);
+  Serial.print(" C, umidade ");
+  Serial.print(u, 0);
+  Serial.println("%");
+
+  if (!temLeitura) {       // primeira leitura: publica sem esperar os 10 s
+    temLeitura = true;
+    publicarStatus();
+  }
 }
 
-void tratarDados() {
-  String json = "{";
-  json += "\"temperatura\":" + String(temperaturaAtual, 1) + ",";
-  json += "\"umidade\":" + String(umidadeAtual, 1) + ",";
-  json += "\"alerta_ativo\":" + String(alertaAtivo ? "true" : "false") + ",";
-  json += "\"tipo_alerta\":\"" + tipoAlertaAtivo + "\",";
-  json += "\"segundos_em_aberto\":" + String(alertaAtivo ? (millis() - horaInicioAlerta) / 1000 : 0);
-  json += "}";
+void lerBotoes() {
+  // Cada botão: se foi apertado, inverte o booleano (false -> true -> false),
+  // anota o horário se abriu, e publica o novo estado.
 
-  servidor.send(200, "application/json", json);
-}
+  if (foiApertado(botaoTecnico)) {
+    chamadoTecnico = !chamadoTecnico;
+    inicioTecnico  = chamadoTecnico ? millis() : 0;
+    Serial.println(chamadoTecnico ? ">> tecnico: ABERTO" : ">> tecnico: encerrado");
+    publicarStatus();
+  }
 
-// Abre ou encerra um chamado, dependendo do estado atual.
-void alternarChamado(String tipo, String rotulo) {
-  if (alertaAtivo && tipoAlertaAtivo == tipo) {
-    // mesmo botao que abriu o chamado -> encerra
-    alertaAtivo = false;
-    tipoAlertaAtivo = "nenhum";
-    Serial.println(">> Chamado " + rotulo + " ENCERRADO");
-    mqttClient.publish(topicoSala, "encerrado");
-  } else {
-    // chamado novo (ou troca de tipo, se ja tinha outro aberto)
-    alertaAtivo = true;
-    tipoAlertaAtivo = tipo;
-    horaInicioAlerta = millis();
-    mqttClient.publish(topicoSala, tipo.c_str());
-    Serial.println(">> Chamado: " + rotulo);
+  if (foiApertado(botaoMaterial)) {
+    chamadoMaterial = !chamadoMaterial;
+    inicioMaterial  = chamadoMaterial ? millis() : 0;
+    Serial.println(chamadoMaterial ? ">> material: ABERTO" : ">> material: encerrado");
+    publicarStatus();
+  }
+
+  if (foiApertado(botaoOutro)) {
+    chamadoOutro = !chamadoOutro;
+    inicioOutro  = chamadoOutro ? millis() : 0;
+    Serial.println(chamadoOutro ? ">> outro: ABERTO" : ">> outro: encerrado");
+    publicarStatus();
   }
 }
 
 void setup() {
   Serial.begin(115200);
-  dht.begin();
+  dht.begin();  
 
-  pinMode(BOTAO_TECNICO, INPUT_PULLUP);
+  pinMode(BOTAO_TECNICO,  INPUT_PULLUP);
   pinMode(BOTAO_MATERIAL, INPUT_PULLUP);
-  pinMode(BOTAO_OUTROS, INPUT_PULLUP);
+  pinMode(BOTAO_OUTRO,    INPUT_PULLUP);
 
   conectarWifi();
-  mqttClient.setServer(mqttBroker, mqttPorta);
-  conectarMQTT();
 
-  servidor.on("/", tratarPaginaPrincipal);
-  servidor.on("/dados", tratarDados);
-  servidor.begin();
-  Serial.println("Servidor web iniciado.");
+  mqttClient.setServer(mqttBroker, mqttPorta);
+  mqttClient.setCallback(aoReceberComando);
+  conectarMQTT();
 }
+
 
 void loop() {
-  servidor.handleClient();
   if (!mqttClient.connected()) {
-  conectarMQTT();
-}
-mqttClient.loop();
-
-  if (millis() - ultimaLeituraDHT >= intervaloDHT) {
-    ultimaLeituraDHT = millis();
-
-    float umidade = dht.readHumidity();
-    float temperatura = dht.readTemperature();
-
-    if (!isnan(umidade) && !isnan(temperatura)) {
-      temperaturaAtual = temperatura;
-      umidadeAtual = umidade;
-    }
+    conectarMQTT();
   }
+  mqttClient.loop();
 
-  if (digitalRead(BOTAO_TECNICO) == LOW) {
-    alternarChamado("tecnico", "problema TECNICO");
-    delay(300); // debounce
-  }
+  lerTemperatura();
 
-  if (digitalRead(BOTAO_MATERIAL) == LOW) {
-    alternarChamado("material", "falta de MATERIAL");
-    delay(300);
-  }
+  lerBotoes();
 
-  if (digitalRead(BOTAO_OUTROS) == LOW) {
-    alternarChamado("outros", "OUTROS");
-    delay(300);
+  if (millis() - ultimaPublicacao >= intervaloPublicacao) {
+    publicarStatus();
   }
 }
-
