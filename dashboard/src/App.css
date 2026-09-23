@@ -1,0 +1,81 @@
+/* ============================================================================
+   App.css — layout e componentes do painel. SUBSTITUI o App.css do Vite.
+   ============================================================================ */
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px 18px 40px; }
+
+/* ---------- cabeçalho ---------- */
+header {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  align-items: baseline; justify-content: space-between;
+  padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 20px;
+}
+h1 { font-size: 19px; font-weight: 600; margin: 0; }
+.sub { color: var(--txt-dim); font-size: 13px; margin-top: 2px; }
+.clock { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--txt-dim); }
+
+/* ---------- grade: planta à esquerda, informações à direita ---------- */
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 18px; }
+@media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 16px; margin-bottom: 18px;
+}
+.card h2 {
+  font-size: 12px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--txt-dim); margin: 0 0 14px;
+}
+
+/* ---------- planta ---------- */
+.plan { width: 100%; max-width: 380px; height: auto; display: block; margin: 0 auto; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+.alarm { animation: pulse 1.3s ease-in-out infinite; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; font-size: 12.5px; color: var(--txt-dim); }
+.legend span { display: flex; align-items: center; gap: 6px; }
+.dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+/* ---------- status ---------- */
+.status-row { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.big { font-family: "IBM Plex Mono", monospace; font-size: 34px; font-weight: 600; line-height: 1; }
+.loc { font-weight: 600; font-size: 17px; }
+.dim { color: var(--txt-dim); font-size: 13px; }
+
+/* ---------- fila ---------- */
+.queue { display: flex; flex-direction: column; gap: 9px; }
+.item {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-left: 4px solid var(--call); border-radius: 8px;
+  padding: 11px 13px; display: flex; gap: 12px; align-items: center;
+}
+.item.temp { border-left-color: var(--temp); }
+.item.off  { border-left-color: var(--off); }
+.item-body { flex: 1; min-width: 0; }
+.item-top { display: flex; align-items: center; gap: 9px; margin-bottom: 2px; flex-wrap: wrap; }
+.badge {
+  min-width: 24px; height: 24px; padding: 0 5px; border-radius: 5px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 600; color: #0E1419;
+}
+.item-title { font-weight: 600; }
+.item-meta { color: var(--txt-dim); font-size: 12.5px; }
+.empty { color: var(--txt-dim); font-size: 13.5px; text-align: center; padding: 22px 10px; }
+
+/* ---------- botões ---------- */
+button {
+  font: inherit; font-size: 13px; color: var(--txt);
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 7px; padding: 7px 11px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+button:hover { background: #26323C; border-color: #3A4956; }
+.btn-close { flex: none; border-color: #4A3A3A; color: #F2B8B4; }
+.btn-close:hover { background: #3A2626; border-color: #6A4444; }
+
+/* ---------- aviso de novo chamado ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  background: #2A1A1A; border: 1px solid var(--call); color: var(--txt);
+  padding: 10px 16px; border-radius: 9px; font-size: 14px; z-index: 10;
+}

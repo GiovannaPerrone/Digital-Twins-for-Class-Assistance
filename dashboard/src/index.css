@@ -1,0 +1,29 @@
+/* ============================================================================
+   index.css — cores e base. SUBSTITUI o index.css que o Vite cria:
+   o original centraliza tudo na tela e quebraria o layout do painel.
+   ============================================================================ */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap");
+
+:root {
+  --bg: #0E1419;     --panel: #161E25;   --panel-2: #1D2730;  --line: #2A3641;
+  --txt: #E6EDF3;    --txt-dim: #8A9AA8;
+  --ok: #3FB77E;     /* normal            */
+  --call: #E8534B;   /* chamado aberto    */
+  --temp: #E0A02A;   /* temperatura       */
+  --off: #5A6976;    /* sem comunicação   */
+  --room: #232E38;   --room-line: #34424E;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--txt);
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
