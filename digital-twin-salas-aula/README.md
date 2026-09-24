@@ -52,7 +52,7 @@ Placa: `NodeMCU 1.0 (ESP-12E Module)`
 - [x] Montagem física do circuito (DHT11 + 3 botões) em protoboard
 - [x] Firmware de leitura do DHT11 + botões, validado via Monitor Serial
 - [ ] LED RGB (aguardando resistores de 220Ω, chegada prevista 22/09)
-- [ ] Conectividade Wi-Fi (ESP8266 enviando dados)
+- [x] Conectividade Wi-Fi (ESP8266 enviando dados)
 - [ ] Backend para receber os dados
 - [ ] Dashboard / planta baixa 2D (representação virtual)
 - [ ] Montagem final soldada + case impressa em 3D
