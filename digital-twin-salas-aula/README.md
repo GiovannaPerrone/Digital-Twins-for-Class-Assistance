@@ -6,8 +6,8 @@ Sistema embarcado que combina monitoramento ambiental em tempo real (temperatura
 
 O projeto tem 3 camadas:
 
-1. **Hardware** — ESP8266 (NodeMCU) lendo um sensor DHT11 (temperatura/umidade) e 3 botões físicos de assistência (Técnico, Material, Outros). *(concluído e validado)*
-2. **Conectividade** — o ESP8266 se conecta ao Wi-Fi e envia os dados lidos para um backend. *(em desenvolvimento)*
+1. **Hardware** — ESP8266 (NodeMCU) lendo um sensor DHT11 (temperatura/umidade), 3 botões físicos de assistência (Técnico, Material, Outros) e um LED RGB como indicador local de status. *(concluído e validado)*
+2. **Conectividade** — o ESP8266 publica os dados lidos via protocolo MQTT (broker público HiveMQ) e assina um tópico de comando para fechamento remoto de chamados. *(concluído e validado)*
 3. **Representação virtual** — uma planta baixa 2D que reflete em tempo real o estado da sala (temperatura atual + alertas de botão), visível para os inspetores. *(em desenvolvimento)*
 
 ## Hardware
@@ -17,7 +17,8 @@ O projeto tem 3 camadas:
 | ESP8266 NodeMCU (ESP-12E) | Microcontrolador principal, Wi-Fi nativo |
 | DHT11 (módulo 3 pinos) | Sensor de temperatura e umidade |
 | 3x botão físico (push button) | Chamadas de assistência: Técnico, Material, Outros |
-| LED RGB (módulo KY-009, 4 pinos) | Indicador de status (verde/amarelo/vermelho) — aguardando resistores |
+| LED RGB (módulo KY-009, 4 pinos, cátodo comum) | Indicador local de status (verde/amarelo/vermelho) |
+| 3x resistor 220Ω | Limitação de corrente nos canais R/G/B do LED |
 
 ## Mapeamento de pinos
 
@@ -28,32 +29,43 @@ O projeto tem 3 camadas:
 | D1 | Botão — Técnico |
 | D2 | Botão — Material |
 | D3 | Botão — Outros (compartilha função com o botão FLASH da placa — não pressionar durante boot) |
-| D6 | LED RGB — Vermelho |
-| D7 | LED RGB — Verde |
+| D7 | LED RGB — Vermelho |
+| D6 | LED RGB — Verde |
 | D5 | LED RGB — Azul |
 | GND | Comum (DHT11, os 3 botões, cátodo do LED) |
+
+> Nota: os pinos D6/D7 estão invertidos em relação ao "esperado" (D6→R, D7→G) de propósito — na montagem física, os fios de R e G do módulo ficaram trocados na protoboard, e a correção foi feita invertendo os `#define` no firmware em vez de remontar o circuito.
 
 Diagrama de conexões: [`docs/diagrama_conexoes.png`](docs/diagrama_conexoes.png)
 
 ## Firmware
 
-- [`firmware/digital_twin_dht_botoes.ino`](firmware/digital_twin_dht_botoes.ino) — leitura do DHT11 + detecção dos 3 botões, com saída via Serial (115200 baud). Testado e validado em protoboard.
+- [`firmware/digital_twin_dht_botoes.ino`](firmware/digital_twin_dht_botoes.ino) — leitura do DHT11, detecção dos 3 botões, controle do LED RGB e comunicação MQTT (publicação de status + assinatura de comandos). Testado e validado em protoboard.
 
 ### Bibliotecas necessárias (Arduino IDE)
 
 - Suporte de placa **esp8266** (via Boards Manager, URL: `http://arduino.esp8266.com/stable/package_esp8266com_index.json`)
 - **DHT sensor library** (Adafruit)
 - **Adafruit Unified Sensor** (dependência da anterior)
+- **PubSubClient** (comunicação MQTT)
 
 Placa: `NodeMCU 1.0 (ESP-12E Module)`
 
+## Customizações
+
+O firmware parte de bibliotecas padrão do ecossistema ESP8266/Arduino, mas várias adaptações foram feitas para atender aos requisitos específicos do projeto:
+
+- **Lógica de prioridade do LED**: implementação própria (não vem de nenhuma biblioteca) que decide qual cor exibir com base no estado combinado de temperatura e chamados — vermelho (chamado aberto) tem prioridade sobre âmbar (temperatura acima do limite), que tem prioridade sobre verde (normal). O amarelo é obtido acendendo os canais vermelho e verde simultaneamente, já que o módulo KY-009 não tem canal amarelo dedicado.
+- **Payload MQTT customizado**: estrutura JSON própria publicada de forma retained, contendo identificador da sala, leituras de temperatura/umidade e o estado de cada um dos três tipos de chamado (aberto/fechado, com tempo decorrido).
+- **Tópico de comando por sala**: o firmware assina um tópico MQTT específico da sala para permitir que o dashboard feche remotamente um chamado aberto, sem exigir que o inspetor esteja na mesma rede local da sala.
+- **Correção de pinagem R/G**: ajuste no código para inverter os pinos usados pelos canais vermelho e verde do LED, compensando uma inversão física na fiação (ver nota na seção de mapeamento de pinos acima) sem precisar remontar o circuito.
+- **Conectividade Wi-Fi**: configuração ajustada para lidar com a limitação do ESP8266 de não suportar redes 5GHz — validado usando hotspot com compatibilidade forçada para 2.4GHz.
+
 ## Status atual
 
-- [x] Montagem física do circuito (DHT11 + 3 botões) em protoboard
-- [x] Firmware de leitura do DHT11 + botões, validado via Monitor Serial
-- [ ] LED RGB (aguardando resistores de 220Ω, chegada prevista 22/09)
-- [x] Conectividade Wi-Fi (ESP8266 enviando dados)
-- [ ] Backend para receber os dados
+- [x] Montagem física do circuito (DHT11 + 3 botões + LED RGB) em protoboard
+- [x] Firmware de leitura do DHT11, botões e controle do LED, validado via Monitor Serial
+- [x] Conectividade Wi-Fi + MQTT (publicação de status e recebimento de comandos)
 - [ ] Dashboard / planta baixa 2D (representação virtual)
 - [ ] Montagem final soldada + case impressa em 3D
 
