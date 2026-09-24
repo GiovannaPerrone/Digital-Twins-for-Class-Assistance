@@ -40,7 +40,7 @@ Diagrama de conexões: [`docs/diagrama_conexoes.png`](docs/diagrama_conexoes.png
 
 ## Firmware
 
-- [`firmware/digital_twin_dht_botoes.ino`](firmware/digital_twin_dht_botoes.ino) — leitura do DHT11, detecção dos 3 botões, controle do LED RGB e comunicação MQTT (publicação de status + assinatura de comandos). Testado e validado em protoboard.
+- [`firmware/DTclassroom.ino`](firmware/DTclassroom.ino) — leitura do DHT11, detecção dos 3 botões, controle do LED RGB e comunicação MQTT (publicação de status + assinatura de comandos). Testado e validado em protoboard.
 
 ### Bibliotecas necessárias (Arduino IDE)
 
