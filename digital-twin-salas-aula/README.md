@@ -40,7 +40,7 @@ Diagrama de conexões: [`docs/diagrama_conexoes.png`](docs/diagrama_conexoes.png
 
 ## Firmware
 
-- [`firmware/DTclassroom.ino`](firmware/DTclassroom.ino) — leitura do DHT11, detecção dos 3 botões, controle do LED RGB e comunicação MQTT (publicação de status + assinatura de comandos). Testado e validado em protoboard.
+- [`firmware/DTclassroom/DTclassroom.ino`](firmware/DTclassroom/DTclassroom.ino) — leitura do DHT11, detecção dos 3 botões, controle do LED RGB e comunicação MQTT (publicação de status + assinatura de comandos). Testado e validado em protoboard.
 
 ### Bibliotecas necessárias (Arduino IDE)
 
@@ -61,11 +61,16 @@ O firmware parte de bibliotecas padrão do ecossistema ESP8266/Arduino, mas vár
 - **Correção de pinagem R/G**: ajuste no código para inverter os pinos usados pelos canais vermelho e verde do LED, compensando uma inversão física na fiação (ver nota na seção de mapeamento de pinos acima) sem precisar remontar o circuito.
 - **Conectividade Wi-Fi**: configuração ajustada para lidar com a limitação do ESP8266 de não suportar redes 5GHz — validado usando hotspot com compatibilidade forçada para 2.4GHz.
 
+## Testes
+
+- [`testes/qos`](testes/qos) — comparação dos níveis de QoS 0, 1 e 2 do MQTT na placa (latência, perda de mensagens e custo do `publish()`), usada no artigo. O QoS 2 dobrou a latência, e os QoS 1 e 2 travam a placa cerca de 1 s a cada publicação, sem ganho consistente de confiabilidade; por isso o firmware segue em QoS 0. As instruções para reproduzir estão no README da pasta.
+
 ## Status atual
 
 - [x] Montagem física do circuito (DHT11 + 3 botões + LED RGB) em protoboard
 - [x] Firmware de leitura do DHT11, botões e controle do LED, validado via Monitor Serial
 - [x] Conectividade Wi-Fi + MQTT (publicação de status e recebimento de comandos)
+- [x] Avaliação de QoS do MQTT na placa (3 rodadas, ver [`testes/qos`](testes/qos))
 - [ ] Dashboard / planta baixa 2D (representação virtual)
 - [ ] Montagem final soldada + case impressa em 3D
 
