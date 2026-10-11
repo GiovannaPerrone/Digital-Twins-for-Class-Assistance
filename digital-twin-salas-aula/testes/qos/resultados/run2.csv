@@ -1,0 +1,4 @@
+qos,env,pc_recebidas,perda_ida_pct,dup_ida,pong,perda_volta_pct,perda_total_pct,rtt_media,rtt_med,rtt_p95,rtt_max,pub_med,pub_max,falhas_pub,erro,reconex,dup,atras,rssi
+0,100,100,0.0,0,100,0.0,0.0,1158.4,733.1,2742.1,3239.8,0.5,1.5,0,0,0,0,0,-38
+1,100,100,0.0,0,100,0.0,0.0,1580.5,1176.1,4135.3,4594.1,930.7,2898.2,0,0,0,0,0,-39
+2,100,100,0.0,0,96,4.0,4.0,2790.6,2488.1,5081.5,5922.1,1071.7,2823.9,4,-9,4,0,0,-38
