@@ -19,7 +19,8 @@
     D7  -> LED RGB Verde
     D5  -> LED RGB Azul
     D8  -> livre (nao usado ainda; cuidado, precisa ficar em LOW no boot)
-    GND -> comum (DHT11, os 3 botoes, catodo comum do LED)
+    A0  -> Microfone MAX9814 OUT (VDD -> 3V3, GND -> GND, GAIN -> VDD = 40 dB, AR solto)
+    GND -> comum (DHT11, os 3 botoes, catodo comum do LED, microfone)
 
   Bibliotecas necessarias (alem das ja instaladas):
     - PubSubClient (Nick O'Leary)
@@ -33,6 +34,8 @@
     3. Client ID unico por placa (usa o chip ID), em vez de um texto
        fixo - evita que o broker derrube a conexao quando duas sessoes
        usam o mesmo ID.
+    5. Microfone MAX9814 no A0: dois estalos de dedos seguidos abrem um
+       chamado (funcao lerMicrofone()). Parametros logo antes dela.
     4. Removido o #include do ESP8266WebServer (nao tem servidor web
        embutido aqui) e as variaveis que sobraram sem uso (topicoSala,
        ultimaLeituraDHT, intervaloDHT).
@@ -44,7 +47,7 @@
 #include "credenciais.h"
 
 // >>> Broker MQTT <<<
-const char* mqttBroker = "broker.hivemq.com";
+const char* mqttBroker = "broker.emqx.io";
 const int mqttPorta = 1883;
 
 const char* TOPICO_STATUS  = "digitaltwin/sala120/status";
@@ -309,6 +312,156 @@ void lerBotoes() {
   }
 }
 
+// ---------------------------------------------------------------------
+// Microfone MAX9814 no A0: dois estalos de dedos seguidos abrem um chamado.
+//
+// Como funciona (sem machine learning, so amplitude e tempo):
+//   1. Le o A0 a cada INTERVALO_AMOSTRA_US e acompanha devagar o nivel
+//      central do sinal (~400 com o MAX9814) e o ruido de fundo.
+//   2. Um som "alto" comeca quando o desvio passa de FATOR_SOBRE_RUIDO vezes
+//      o ruido de fundo (nunca menos que LIMIAR_MINIMO) e termina quando fica
+//      SILENCIO_FIM_ESTALO_MS abaixo da metade desse limiar.
+//   3. Se o som foi curto (ate DURACAO_MAXIMA_ESTALO_MS), conta como estalo.
+//      Voz, musica e batidas longas passam disso e sao ignoradas.
+//   4. Dois estalos com INTERVALO_MIN a INTERVALO_MAX entre eles abrem o
+//      chamado escolhido em TIPO_CHAMADO_ESTALO. O estalo so ABRE: pra fechar,
+//      use o botao ou o painel.
+// ---------------------------------------------------------------------
+#define PINO_MICROFONE A0
+
+const bool MOSTRAR_DEBUG_ESTALO = true;   // imprime cada som curto detectado (use pra calibrar)
+const int  TIPO_CHAMADO_ESTALO  = 0;      // 0 = tecnico, 1 = material, 2 = outro
+
+const unsigned long INTERVALO_AMOSTRA_US           = 1000;  // 1 kHz
+const unsigned long TEMPO_AQUECIMENTO_MS           = 2000;  // ignora estalos logo apos ligar
+const float         LIMIAR_MINIMO                  = 90.0;  // em unidades do ADC (0 a 1023)
+const float         FRACAO_DO_PICO_NO_FIM          = 0.25;  // o som "acabou" quando cai abaixo dessa fracao do pico
+const float         FATOR_SOBRE_RUIDO              = 6.0;
+const unsigned long DURACAO_MAXIMA_ESTALO_MS       = 80;
+const unsigned long SILENCIO_FIM_ESTALO_MS         = 15;
+const unsigned long INTERVALO_MIN_ENTRE_ESTALOS_MS = 150;
+const unsigned long INTERVALO_MAX_ENTRE_ESTALOS_MS = 900;
+const unsigned long PAUSA_APOS_ESTALO_DUPLO_MS     = 3000;  // evita abrir de novo por engano
+
+float         centroDoSinal       = 0;
+float         ruidoMedio          = 2;
+bool          microfoneIniciado   = false;
+unsigned long microfoneIniciadoEm = 0;
+unsigned long ultimaAmostraUs     = 0;
+
+bool          dentroDeSomAlto     = false;
+unsigned long inicioSomAltoMs     = 0;
+unsigned long ultimoSomAltoMs     = 0;
+float         picoDoSomAlto       = 0;
+
+int           estalosContados     = 0;
+unsigned long primeiroEstaloMs    = 0;
+unsigned long ignorarEstalosAteMs = 0;
+
+void abrirChamadoPeloEstalo() {
+  const char*    nome;
+  bool*          chamado;
+  unsigned long* inicio;
+
+  if (TIPO_CHAMADO_ESTALO == 1) {
+    nome = "material"; chamado = &chamadoMaterial; inicio = &inicioMaterial;
+  } else if (TIPO_CHAMADO_ESTALO == 2) {
+    nome = "outro";    chamado = &chamadoOutro;    inicio = &inicioOutro;
+  } else {
+    nome = "tecnico";  chamado = &chamadoTecnico;  inicio = &inicioTecnico;
+  }
+
+  ignorarEstalosAteMs = millis() + PAUSA_APOS_ESTALO_DUPLO_MS;
+  if (*chamado) return;   // ja estava aberto: nada a fazer
+
+  *chamado = true;
+  *inicio  = millis();
+  Serial.print(">> estalo duplo: ");
+  Serial.print(nome);
+  Serial.println(": ABERTO");
+  atualizarLedStatus();
+  publicarStatus();
+}
+
+void registrarEstalo(unsigned long inicioMs) {
+  if (estalosContados == 1) {
+    unsigned long intervalo = inicioMs - primeiroEstaloMs;
+    if (intervalo < INTERVALO_MIN_ENTRE_ESTALOS_MS) return;   // eco do mesmo estalo
+    if (intervalo <= INTERVALO_MAX_ENTRE_ESTALOS_MS) {
+      estalosContados = 0;
+      abrirChamadoPeloEstalo();
+      return;
+    }
+    // passou da janela: este estalo vira o primeiro de uma nova tentativa
+  }
+  estalosContados  = 1;
+  primeiroEstaloMs = inicioMs;
+}
+
+void lerMicrofone() {
+  unsigned long agoraUs = micros();
+  if (agoraUs - ultimaAmostraUs < INTERVALO_AMOSTRA_US) return;
+  ultimaAmostraUs = agoraUs;
+
+  unsigned long agoraMs = millis();
+  float valor = analogRead(PINO_MICROFONE);
+
+  if (!microfoneIniciado) {
+    centroDoSinal       = valor;
+    microfoneIniciado   = true;
+    microfoneIniciadoEm = agoraMs;
+    return;
+  }
+
+  float desvio = fabs(valor - centroDoSinal);
+  float limiar = max(LIMIAR_MINIMO, FATOR_SOBRE_RUIDO * ruidoMedio);
+
+  // Acompanha devagar o nivel central e o ruido de fundo, mas so enquanto
+  // nao ha som alto (senao o proprio estalo "ensinaria" o limiar a subir).
+  if (!dentroDeSomAlto && desvio < limiar) {
+    centroDoSinal += (valor - centroDoSinal) * 0.001;
+    ruidoMedio    += (desvio - ruidoMedio)   * 0.002;
+  }
+
+  if (agoraMs - microfoneIniciadoEm < TEMPO_AQUECIMENTO_MS) return;
+  if ((long)(agoraMs - ignorarEstalosAteMs) < 0) return;
+
+  if (!dentroDeSomAlto) {
+    if (desvio >= limiar) {
+      dentroDeSomAlto = true;
+      inicioSomAltoMs = agoraMs;
+      ultimoSomAltoMs = agoraMs;
+      picoDoSomAlto   = desvio;
+    }
+    return;
+  }
+
+  // Dentro de um som alto: acompanha o pico e o ultimo instante "alto".
+  if (desvio > picoDoSomAlto) picoDoSomAlto = desvio;
+  float limiarFim = max(limiar * 0.5f, picoDoSomAlto * FRACAO_DO_PICO_NO_FIM);
+  if (desvio >= limiarFim) ultimoSomAltoMs = agoraMs;
+  if (agoraMs - ultimoSomAltoMs < SILENCIO_FIM_ESTALO_MS) return;   // ainda nao acabou
+
+  // O som acabou: foi curto o bastante pra ser um estalo?
+  dentroDeSomAlto = false;
+  unsigned long duracaoMs = ultimoSomAltoMs - inicioSomAltoMs;
+  bool pareceEstalo = duracaoMs <= DURACAO_MAXIMA_ESTALO_MS;
+
+  if (MOSTRAR_DEBUG_ESTALO) {
+    Serial.print(pareceEstalo ? "[mic] estalo" : "[mic] som longo, ignorado");
+    Serial.print("  pico=");     Serial.print(picoDoSomAlto, 0);
+    Serial.print("  duracao=");  Serial.print(duracaoMs);
+    Serial.print(" ms  limiar="); Serial.print(limiar, 0);
+    Serial.print("  ruido=");    Serial.println(ruidoMedio, 1);
+  }
+
+  if (pareceEstalo) {
+    registrarEstalo(inicioSomAltoMs);
+  } else {
+    estalosContados = 0;   // som longo (voz, batida) quebra a sequencia
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   dht.begin();
@@ -326,23 +479,50 @@ void setup() {
   // pra nao colidir com outras conexoes usando o mesmo nome.
   snprintf(clientId, sizeof(clientId), "ESP8266_Sala%s_%08X", SALA, ESP.getChipId());
 
+  // Desliga o modem sleep do Wi-Fi: com ele ligado, alguns roteadores/hotspots
+  // derrubam a conexao da ESP8266. Gasta um pouco mais de energia, sem problema no USB.
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
   conectarWifi();
 
   mqttClient.setServer(mqttBroker, mqttPorta);
+  mqttClient.setKeepAlive(30);       // padrao 15 s: derruba facil em rede com atraso
+  mqttClient.setSocketTimeout(10);   // espera ate 10 s por resposta antes de desistir
   mqttClient.setCallback(aoReceberComando);
   mqttClient.setBufferSize(400);   // buffer padrao (128) e pequeno demais pro JSON de status
   conectarMQTT();
 }
 
-void loop() {
-  if (!mqttClient.connected()) {
-    conectarMQTT();
+// Reconexao que NAO trava o resto: tenta uma vez a cada INTERVALO_RECONEXAO e
+// devolve o controle, assim botoes e microfone continuam funcionando com a
+// rede caindo. (conectarMQTT(), que trava, continua sendo usada so no setup.)
+unsigned long ultimaTentativaMqtt = 0;
+
+void reconectarMQTTSemTravar() {
+  if (mqttClient.connected()) return;
+  if (millis() - ultimaTentativaMqtt < INTERVALO_RECONEXAO) return;
+  ultimaTentativaMqtt = millis();
+
+  Serial.print("Reconectando no broker MQTT... ");
+  if (mqttClient.connect(clientId)) {
+    Serial.println("conectado.");
+    mqttClient.subscribe(TOPICO_COMANDO);
+    publicarStatus();
+  } else {
+    Serial.print("falhou, codigo=");
+    Serial.print(mqttClient.state());
+    Serial.println(" (nova tentativa em 5 segundos)");
   }
+}
+
+void loop() {
+  reconectarMQTTSemTravar();
   mqttClient.loop();
 
   lerTemperatura();
 
   lerBotoes();
+
+  lerMicrofone();
 
   if (millis() - ultimaPublicacao >= intervaloPublicacao) {
     publicarStatus();
