@@ -35,7 +35,8 @@
        fixo - evita que o broker derrube a conexao quando duas sessoes
        usam o mesmo ID.
     5. Microfone MAX9814 no A0: dois estalos de dedos seguidos abrem um
-       chamado (funcao lerMicrofone()). Parametros logo antes dela.
+       chamado da categoria "outro" (funcao lerMicrofone()). Parametros
+       logo antes dela.
     4. Removido o #include do ESP8266WebServer (nao tem servidor web
        embutido aqui) e as variaveis que sobraram sem uso (topicoSala,
        ultimaLeituraDHT, intervaloDHT).
@@ -330,7 +331,7 @@ void lerBotoes() {
 #define PINO_MICROFONE A0
 
 const bool MOSTRAR_DEBUG_ESTALO = true;   // imprime cada som curto detectado (use pra calibrar)
-const int  TIPO_CHAMADO_ESTALO  = 0;      // 0 = tecnico, 1 = material, 2 = outro
+const int  TIPO_CHAMADO_ESTALO  = 2;      // 0 = tecnico, 1 = material, 2 = outro
 
 const unsigned long INTERVALO_AMOSTRA_US           = 1000;  // 1 kHz
 const unsigned long TEMPO_AQUECIMENTO_MS           = 2000;  // ignora estalos logo apos ligar
