@@ -72,8 +72,8 @@ const unsigned long INTERVALO_RECONEXAO   = 5000UL;    // 5 s
 // D6 e D7 trocados de propósito: na fiação real, o pino que fisicamente
 // chega no R do módulo está ligado ao D7, e o que chega no G está no D6.
 // Mais fácil inverter aqui do que remexer nos jumpers da protoboard.
-#define LED_R D7
-#define LED_G D6
+#define LED_R D6   // conferido com o teste do LED em 12/nov: D6 acende vermelho
+#define LED_G D7   // e D7 acende verde
 #define LED_B D5
 
 const float TEMPERATURA_ALERTA = 26.0;  // acima disso, LED fica amarelo (sem chamado aberto)
@@ -218,6 +218,13 @@ bool foiApertado(Botao &b) {
   return false;
 }
 
+// Motivo da ultima queda do Wi-Fi (preenchido pelo evento do ESP8266).
+// Codigos comuns: 2 auth expirou, 8 AP mandou sair, 15 handshake falhou,
+// 200 beacon timeout (perdeu o sinal do AP), 201 AP nao encontrado, 202 senha errada.
+volatile int  ultimoMotivoWifi = -1;
+volatile bool wifiCaiuAviso    = false;
+WiFiEventHandler handlerWifiDesconectou;
+
 void conectarWifi() {
   Serial.print("Conectando na rede ");
   Serial.println(NOME_DA_REDE);
@@ -333,7 +340,7 @@ void lerBotoes() {
 const bool MOSTRAR_DEBUG_ESTALO = true;   // imprime cada som curto detectado (use pra calibrar)
 const int  TIPO_CHAMADO_ESTALO  = 2;      // 0 = tecnico, 1 = material, 2 = outro
 
-const unsigned long INTERVALO_AMOSTRA_US           = 1000;  // 1 kHz
+const unsigned long INTERVALO_AMOSTRA_US           = 4000;  // 250 Hz (1000 = 1 kHz derrubava o Wi-Fi; se estabilizar, da pra tentar 2000)
 const unsigned long TEMPO_AQUECIMENTO_MS           = 2000;  // ignora estalos logo apos ligar
 const float         LIMIAR_MINIMO                  = 90.0;  // em unidades do ADC (0 a 1023)
 const float         FRACAO_DO_PICO_NO_FIM          = 0.25;  // o som "acabou" quando cai abaixo dessa fracao do pico
@@ -463,8 +470,137 @@ void lerMicrofone() {
   }
 }
 
+// ===== MICROFONE PELO PINO DIGITAL (D0) =====
+// A saida do MAX9814 fica parada em ~1,2 V no silencio: o pino digital le sempre
+// o mesmo valor. Com som forte o sinal oscila e o pino alterna 0/1 rapido.
+// Uma rajada curta de alternancias = estalo; dois estalos no intervalo certo
+// abrem o chamado (mesma logica de registrarEstalo() do microfone analogico).
+#define PINO_MICROFONE_DIGITAL D0
+
+// Calibrado em 12/nov: estalos reais deram 16 a 24 transicoes em 2 a 7 ms;
+// ruido deu ate 12 transicoes, ou durou 17 ms ou mais.
+const int           TRANSICOES_MINIMAS_SOM     = 14;   // menos que isso e ruido solto
+const unsigned long DURACAO_MAXIMA_ESTALO_DIGITAL_MS = 15;  // estalo e curto: mais que isso nao conta
+const unsigned long SILENCIO_FIM_SOM_DIGITAL_MS = 15;  // sem alternar por 15 ms = som acabou
+
+int           nivelAnteriorMicDigital  = -1;
+bool          somDigitalAtivo          = false;
+unsigned long inicioSomDigitalMs       = 0;
+unsigned long ultimaTransicaoMs        = 0;
+int           transicoesNoSom          = 0;
+unsigned long ultimoAvisoNivelMs       = 0;
+
+void lerMicrofoneDigital() {
+  unsigned long agoraMs = millis();
+  int nivel = digitalRead(PINO_MICROFONE_DIGITAL);
+
+  if (nivelAnteriorMicDigital < 0) {          // primeira leitura
+    nivelAnteriorMicDigital = nivel;
+    Serial.printf("[mic D0] nivel em silencio = %d\n", nivel);
+    return;
+  }
+
+  if (nivel != nivelAnteriorMicDigital) {
+    nivelAnteriorMicDigital = nivel;
+    if (!somDigitalAtivo) {
+      somDigitalAtivo    = true;
+      inicioSomDigitalMs = agoraMs;
+      transicoesNoSom    = 0;
+    }
+    transicoesNoSom++;
+    ultimaTransicaoMs = agoraMs;
+  }
+
+  if (!somDigitalAtivo) return;
+  if (agoraMs - ultimaTransicaoMs < SILENCIO_FIM_SOM_DIGITAL_MS) return;   // ainda tem som
+
+  // O som acabou
+  somDigitalAtivo = false;
+  if (transicoesNoSom < TRANSICOES_MINIMAS_SOM) return;    // ruido solto, ignora
+
+  unsigned long duracaoMs = ultimaTransicaoMs - inicioSomDigitalMs;
+  bool pareceEstalo = duracaoMs <= DURACAO_MAXIMA_ESTALO_DIGITAL_MS;
+
+  if (MOSTRAR_DEBUG_ESTALO) {
+    Serial.printf("[mic D0] %s  transicoes=%d  duracao=%lu ms\n",
+                  pareceEstalo ? "estalo" : "som longo, ignorado", transicoesNoSom, duracaoMs);
+  }
+
+  if (agoraMs < TEMPO_AQUECIMENTO_MS) return;
+  if ((long)(agoraMs - ignorarEstalosAteMs) < 0) return;
+
+  if (pareceEstalo) {
+    registrarEstalo(inicioSomDigitalMs);
+  } else {
+    estalosContados = 0;
+  }
+}
+
+// ===== MODO TESTE DE WI-FI =====
+// true  = so conecta no Wi-Fi e imprime o estado a cada 2 s (sem MQTT, DHT11, mic, botoes).
+// false = projeto normal.
+const bool MODO_TESTE_WIFI = false;
+unsigned long ultimaImpressaoTesteWifi = 0;
+// true = alem do Wi-Fi, conecta no MQTT e publica "ola" a cada 5 s num topico de teste.
+const bool TESTE_COM_MQTT = true;
+unsigned long ultimaTentativaTesteMqtt = 0;
+unsigned long ultimaPublicacaoTesteMqtt = 0;
+
+void iniciarTesteWifi() {
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.setPhyMode(WIFI_PHY_MODE_11G);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  handlerWifiDesconectou = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& evento) {
+    ultimoMotivoWifi = evento.reason;
+    wifiCaiuAviso = true;
+  });
+  WiFi.begin(NOME_DA_REDE, SENHA_DA_REDE);
+  if (TESTE_COM_MQTT) {
+    snprintf(clientId, sizeof(clientId), "ESP8266_Teste_%08X", ESP.getChipId());
+    mqttClient.setServer(mqttBroker, mqttPorta);
+    mqttClient.setKeepAlive(30);
+    mqttClient.setSocketTimeout(10);
+  }
+  Serial.println("\n*** MODO TESTE DE WI-FI (so Wi-Fi + MQTT simples, nada mais) ***");
+}
+
+void rodarTesteWifi() {
+  if (wifiCaiuAviso) {
+    wifiCaiuAviso = false;
+    Serial.printf("[%lu s] QUEDA, motivo=%d\n", millis() / 1000, ultimoMotivoWifi);
+  }
+  if (millis() - ultimaImpressaoTesteWifi >= 2000) {
+    ultimaImpressaoTesteWifi = millis();
+    Serial.printf("[%lu s] status=%d  rssi=%d dBm\n", millis() / 1000, WiFi.status(), WiFi.RSSI());
+  }
+
+  if (TESTE_COM_MQTT && WiFi.status() == WL_CONNECTED) {
+    if (!mqttClient.connected()) {
+      if (millis() - ultimaTentativaTesteMqtt >= 5000) {
+        ultimaTentativaTesteMqtt = millis();
+        bool conectou = mqttClient.connect(clientId);
+        Serial.printf("[%lu s] MQTT %s (codigo=%d)\n", millis() / 1000, conectou ? "conectado" : "falhou", mqttClient.state());
+      }
+    } else {
+      mqttClient.loop();
+      if (millis() - ultimaPublicacaoTesteMqtt >= 5000) {
+        ultimaPublicacaoTesteMqtt = millis();
+        mqttClient.publish("teste/dtclassroom/ping", "ola");
+      }
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  // Diagnostico: diz por que a placa (re)iniciou. "External System" e normal logo apos o upload;
+  // "Hardware Watchdog", "Exception" ou "Power on" no meio do uso indicam travamento ou queda de energia.
+  Serial.printf("\n=== Inicio. Motivo do ultimo reset: %s ===\n", ESP.getResetReason().c_str());
+  if (MODO_TESTE_WIFI) {
+    iniciarTesteWifi();
+    return;
+  }
   dht.begin();
 
   pinMode(BOTAO_TECNICO,  INPUT_PULLUP);
@@ -474,6 +610,22 @@ void setup() {
   pinMode(LED_R, OUTPUT);
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
+  pinMode(PINO_MICROFONE_DIGITAL, INPUT);   // saida do MAX9814 tambem ligada no D0
+  // TESTE DO LED: acende um pino por vez (1 s cada) pra conferir a fiacao.
+  // Depois de conferir, pode mudar TESTAR_LED_NO_INICIO para false.
+  const bool TESTAR_LED_NO_INICIO = false;
+  if (TESTAR_LED_NO_INICIO) {
+    const uint8_t pinosLed[3]   = {LED_R, LED_G, LED_B};
+    const char*   nomesLed[3]   = {"D6 (deveria ser VERMELHO)", "D7 (deveria ser VERDE)", "D5 (deveria ser AZUL)"};
+    for (int posicao = 0; posicao < 3; posicao++) {
+      digitalWrite(LED_R, LOW); digitalWrite(LED_G, LOW); digitalWrite(LED_B, LOW);
+      digitalWrite(pinosLed[posicao], HIGH);
+      Serial.print("[teste LED] so o pino ");
+      Serial.println(nomesLed[posicao]);
+      delay(1500);
+    }
+    digitalWrite(LED_R, LOW); digitalWrite(LED_G, LOW); digitalWrite(LED_B, LOW);
+  }
   atualizarLedStatus();   // ja acende verde assim que liga, antes de conectar
 
   // Monta um client ID unico por placa (chip ID em hexadecimal),
@@ -482,7 +634,15 @@ void setup() {
 
   // Desliga o modem sleep do Wi-Fi: com ele ligado, alguns roteadores/hotspots
   // derrubam a conexao da ESP8266. Gasta um pouco mais de energia, sem problema no USB.
+  WiFi.persistent(false);                     // nao regrava a configuracao do Wi-Fi na flash
+  WiFi.mode(WIFI_STA);
+  WiFi.setPhyMode(WIFI_PHY_MODE_11G);         // modo mais compativel com hotspot de celular
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.setAutoReconnect(true);
+  handlerWifiDesconectou = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& evento) {
+    ultimoMotivoWifi = evento.reason;
+    wifiCaiuAviso = true;
+  });
   conectarWifi();
 
   mqttClient.setServer(mqttBroker, mqttPorta);
@@ -498,7 +658,30 @@ void setup() {
 // rede caindo. (conectarMQTT(), que trava, continua sendo usada so no setup.)
 unsigned long ultimaTentativaMqtt = 0;
 
+unsigned long ultimaTentativaWifi = 0;
+
 void reconectarMQTTSemTravar() {
+  if (wifiCaiuAviso) {
+    wifiCaiuAviso = false;
+    Serial.print("[wifi] desconectou (");
+    Serial.print(millis() / 1000);
+    Serial.print(" s desde o inicio), motivo=");
+    Serial.println(ultimoMotivoWifi);
+  }
+
+  // Sem Wi-Fi nao adianta tentar o broker: religa o Wi-Fi (a cada 10 s) e sai.
+  if (WiFi.status() != WL_CONNECTED) {
+    if (millis() - ultimaTentativaWifi >= 10000) {
+      ultimaTentativaWifi = millis();
+      Serial.print("[wifi] sem conexao (status=");
+      Serial.print(WiFi.status());
+      Serial.println("), religando...");
+      WiFi.disconnect();
+      WiFi.begin(NOME_DA_REDE, SENHA_DA_REDE);
+    }
+    return;
+  }
+
   if (mqttClient.connected()) return;
   if (millis() - ultimaTentativaMqtt < INTERVALO_RECONEXAO) return;
   ultimaTentativaMqtt = millis();
@@ -511,19 +694,49 @@ void reconectarMQTTSemTravar() {
   } else {
     Serial.print("falhou, codigo=");
     Serial.print(mqttClient.state());
+    // diagnostico: separa "Wi-Fi caiu" de "internet/broker inacessivel"
+    Serial.print(" | wifi=");
+    Serial.print(WiFi.status() == WL_CONNECTED ? "ok" : "CAIU");
+    Serial.print(" rssi=");
+    Serial.print(WiFi.RSSI());
+    IPAddress ipBroker;
+    Serial.print(" dns=");
+    Serial.print(WiFi.hostByName(mqttBroker, ipBroker) ? ipBroker.toString() : String("FALHOU"));
     Serial.println(" (nova tentativa em 5 segundos)");
   }
 }
 
+// TESTE: false = nao le o microfone (analogRead no A0 pode derrubar o Wi-Fi do ESP8266).
+// Se com false o Wi-Fi ficar estavel, o problema e a leitura do microfone.
+const bool MICROFONE_LIGADO = false;          // leitura pelo A0 (derruba o Wi-Fi do ESP8266)
+const bool MICROFONE_DIGITAL_LIGADO = true;   // leitura pelo D0 (so 0/1, nao usa o conversor analogico)
+// Chaves de teste: tire uma peca por vez pra achar o que derruba o Wi-Fi.
+const bool DHT11_LIGADO   = true;
+const bool BOTOES_LIGADOS = true;
+
 void loop() {
+  if (MODO_TESTE_WIFI) {
+    rodarTesteWifi();
+    return;
+  }
   reconectarMQTTSemTravar();
   mqttClient.loop();
 
-  lerTemperatura();
+  if (DHT11_LIGADO) {
+    lerTemperatura();
+  }
 
-  lerBotoes();
+  if (BOTOES_LIGADOS) {
+    lerBotoes();
+  }
 
-  lerMicrofone();
+  if (MICROFONE_LIGADO) {
+    lerMicrofone();
+  }
+
+  if (MICROFONE_DIGITAL_LIGADO) {
+    lerMicrofoneDigital();
+  }
 
   if (millis() - ultimaPublicacao >= intervaloPublicacao) {
     publicarStatus();
