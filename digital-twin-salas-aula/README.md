@@ -8,7 +8,8 @@ O projeto tem 3 camadas:
 
 1. **Hardware** — ESP8266 (NodeMCU) lendo um sensor DHT11 (temperatura/umidade), 3 botões físicos de assistência (Técnico, Material, Outros), um microfone MAX9814 (abertura de chamado por estalo duplo) e um LED RGB como indicador local de status. *(concluído e validado em protoboard)*
 2. **Conectividade** — o ESP8266 publica os dados lidos via protocolo MQTT (broker público EMQX) e assina um tópico de comando para fechamento remoto de chamados. *(concluído e validado)*
-3. **Representação virtual** — uma planta baixa 2D que reflete em tempo real o estado da sala (temperatura atual + alertas de chamado), visível para os inspetores. *(em desenvolvimento)*
+3. **Representação virtual** — painel web (React) com planta baixa 2D do andar, que reflete em tempo real o estado de cada sala (temperatura atual + alertas de chamado) e mostra a fila de chamados para os inspetores. *(funcionando com o simulador; a placa real ainda não está ligada a ele, ver "Camada de fog e painel")*
+4. **Fog** — broker Mosquitto local + serviço Python que guarda histórico em SQLite e detecta sala fora do ar, rodando num notebook da própria rede, sem depender de internet externa. *(montado; ver [`fog/README_fog.md`](fog/README_fog.md))*
 
 ## Hardware
 
@@ -20,6 +21,7 @@ O projeto tem 3 camadas:
 | Microfone MAX9814 (módulo com AGC) | Detecção de estalo duplo de dedos, que abre um chamado sem tocar no dispositivo |
 | LED RGB (módulo KY-009, 4 pinos, cátodo comum) | Indicador local de status (verde/amarelo/vermelho) |
 | 3x resistor 220Ω | Limitação de corrente nos canais R/G/B do LED |
+| Case impressa em 3D (base, tampa e 3 pinos de botão) | Abriga a placa; ver seção "Case impressa em 3D" |
 
 ## Mapeamento de pinos
 
@@ -40,6 +42,27 @@ O projeto tem 3 camadas:
 > Nota: a ordem dos fios R/G do LED foi conferida com um teste que acende um canal por vez no boot (constante `TESTAR_LED_NO_INICIO` no firmware). Se a montagem mudar e as cores saírem trocadas, ative o teste, veja qual pino acende qual cor e ajuste os `#define LED_R/LED_G/LED_B`.
 
 Diagrama de conexões: [`docs/diagrama_conexoes.png`](docs/diagrama_conexoes.png) *(ainda mostra a versão sem microfone)*
+
+## Case impressa em 3D
+
+Impressa numa Creality Ender-3 V3 SE (camada 0,2 mm, 2 paredes). Medidas em mm, com origem no centro da perfboard.
+
+**Base** (a que está impressa hoje):
+
+| Item | Valor |
+|---|---|
+| Externo | 90,8 × 110,8 × 22,8 |
+| Parede / vão interno | 2,4 / 86 × 106 × 20,4 |
+| Apoios da placa | 4 apoios de 5 mm de altura nos furos da perfboard (±32, ±42), com furo-guia de 2,6 mm |
+| Postes dos parafusos da tampa | Ø 7 nos cantos, furo-guia de 2,6 mm em (±40, ±50) |
+| USB | entalhe de 16 mm na parede curta, centrado em x = +1,8, aberto até a borda (a tampa fecha por cima) |
+| Ventilação do DHT11 | 5 frestas na parede longa, centradas em y = −31,5 (altura do sensor) |
+
+**Tampa** (reimpressa em 19/nov): 90,8 × 110,8, chapa de 2,4 mm, 6 lábios de encaixe com folga de 0,4 mm da parede interna, 4 furos de 3,6 mm com rebaixo para parafuso M3 autorroscante, furos de 7,6 mm para os 3 botões, 8 mm para o LED e 6 mm para o microfone. Imprimir com a face de fora na mesa, sem suporte.
+
+**Pinos dos botões**: 3 peças (cabeça Ø 10 × 1,5 mm, haste Ø 7 × 6,7 mm) que atravessam a tampa e apertam os push buttons; em repouso a cabeça fica 0,5 mm acima da tampa.
+
+> A primeira tampa impressa (84,8 × 104,8) era de uma versão posterior e mais compacta da base, com os postes em (±38,2, ±48,2), e por isso não encaixava. A tampa nova foi gerada a partir da geometria exata da base impressa e conferida no computador (sem interferência, furos alinhados com os postes).
 
 ## Firmware
 
@@ -68,7 +91,15 @@ Placa: `NodeMCU 1.0 (ESP-12E Module)`. Se o upload falhar no meio (`Failed to wr
 | Comando (fechamento remoto de chamado) | `digitaltwin/sala120/comando` |
 | Presença | `digitaltwin/sala120/online` |
 
-> O dashboard precisa estar apontando para o **mesmo broker** que o firmware. O projeto começou no HiveMQ público e foi trocado para o EMQX durante os testes de estabilidade.
+> O dashboard precisa estar apontando para o **mesmo broker** que o firmware. O projeto começou no HiveMQ público e foi trocado para o EMQX durante os testes de estabilidade. Hoje **nenhuma das duas versões do painel fala com o EMQX**: o `useSala.js` antigo ainda aponta para o HiveMQ e o `useSalas.js` (fog) aponta para o Mosquitto local. Ver a seção seguinte.
+
+## Camada de fog e painel
+
+- [`fog/`](fog) — Mosquitto local (`mosquitto.conf`, MQTT na 1883 e WebSocket na 9001, com usuário e senha), `fog_service.py` (assina `digitaltwin/+/status`, grava leituras, eventos e latência em SQLite, marca a sala como offline após 60 s sem notícia e publica o resumo em `digitaltwin/fog/painel`) e `simulador.py` (salas virtuais 121 em diante; nunca usa a 120, que é a placa real). Passo a passo de instalação no Windows e experimentos em [`fog/README_fog.md`](fog/README_fog.md).
+- [`../dashboard/`](../dashboard) — painel React + Vite. A versão atual (`App.jsx` com `useSalas`, `PlantaFog`, `ResumoAndar`, `FilaChamadosFog`) lê o broker do fog em `ws://localhost:9001`. A versão anterior, de uma sala só (`useSala`, `Planta`, `FilaChamados`), continua no projeto.
+
+**Para a placa real entrar no fog** falta mudar o firmware: `mqttBroker` passa a ser o IP do notebook do fog (placa e notebook na mesma rede) e o `connect()` passa a enviar usuário e senha do Mosquitto. Tópicos e JSON não mudam. Enquanto isso não for feito, a placa publica no EMQX público e o painel só mostra salas simuladas.
+
 
 ### Chaves de configuração no firmware
 
@@ -140,11 +171,20 @@ O firmware parte de bibliotecas padrão do ecossistema ESP8266/Arduino, mas vár
 - [x] Abertura de chamado por estalo duplo (microfone no D0), calibrada e sem derrubar o Wi-Fi
 - [x] Avaliação de QoS do MQTT na placa (3 rodadas, ver [`testes/qos`](testes/qos))
 - [x] Projeto da case para impressão 3D (base, tampa e pinos dos botões)
-- [ ] Impressão da case e teste de encaixe
+- [x] Impressão da base e dos pinos
+- [x] Tampa refeita para a base impressa (19/nov)
+- [ ] Teste de encaixe da tampa nova e montagem na case
 - [ ] Montagem final soldada em perfboard (microfone no D0, não no A0)
-- [ ] Dashboard / planta baixa 2D (representação virtual)
+- [x] Painel React com planta do andar e fila de chamados, ligado ao fog
+- [x] Camada de fog (Mosquitto local + serviço Python + SQLite + simulador)
+- [ ] Firmware apontando para o broker do fog (IP do notebook + usuário/senha)
 - [ ] Atualizar o diagrama de conexões com o microfone
+- [ ] Atualizar o comentário de cabeçalho do `DTclassroom.ino` (ainda diz HiveMQ e microfone no A0)
 
 ## Próximos passos
 
-Ver seção "Status atual" acima. O projeto precisa estar pronto para uso (não só protótipo em protoboard) até a segunda prova, incluindo case impressa em 3D.
+1. Testar o encaixe da tampa nova, montar a placa na case e conferir os 3 botões, o LED e o microfone com a tampa fechada.
+2. Soldar o circuito na perfboard com o microfone no D0.
+3. Ligar a placa real ao fog e rodar os experimentos de [`fog/README_fog.md`](fog/README_fog.md).
+4. Recalibrar o estalo duplo com a sala cheia e comparar o DHT11 com um termômetro de referência.
+5. Para várias salas: configuração por sala (número da sala e andar sem recompilar) e suporte à rede do campus.
